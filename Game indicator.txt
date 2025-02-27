@@ -34,22 +34,11 @@
 //@version=5
 indicator("Gamified Trading Adventure", overlay=true)
 
-// ===== Core Configuration =====
-// User settings with simplified interface
-character_type = input.string("Trader", "Character", options=["Trader", "Hunter", "Knight", "Ninja", "Wizard"])
-difficulty = input.string("Balanced", "Difficulty", options=["Easy", "Balanced", "Hard", "Expert"])
-custom_theme = input.string("Dark Fantasy", "Theme", options=["Dark Fantasy", "Sci-Fi", "Medieval", "Cyberpunk", "Classic"])
-show_animations = input.bool(true, "Show Animations")
-show_game_points = input.bool(true, "Show Game Stats")
-show_achievements = input.bool(false, "Show Achievements")
-enable_sound_effects = input.bool(false, "Sound Effects")
-show_debug = input.bool(false, "Debug Mode")
-
-// ===== Utility Functions =====
-// Timeframe normalization for consistent behavior across timeframes
+// ===== Timeframe Normalization Function =====
 get_timeframe_factor() =>
+    int factor = 1
     tf = timeframe.period
-    factor = switch tf
+    factor := switch tf
         "1" => 1
         "3" => 1
         "5" => 1
@@ -67,15 +56,17 @@ get_timeframe_factor() =>
         "M" => 10  // 1M
         => 1
 
-// Calculate volatility - simplified and more accurate
-calc_volatility(src, length) =>
-    std = ta.stdev(src, length)
-    typical_range = math.abs(ta.highest(high, length) - ta.lowest(low, length)) / length
-    (std + typical_range) / 2
+// ===== Game Parameters =====
+// User Character Selection
+character_type = input.string("Trader", "Choose Your Character", options=["Trader", "Hunter", "Knight", "Ninja", "Wizard"])
+difficulty = input.string("Balanced", "Game Difficulty", options=["Easy", "Balanced", "Hard", "Expert"])
+show_animations = input.bool(true, "Show Trade Animations")
+show_game_points = input.bool(true, "Show Game Points System")
+show_achievements = input.bool(false, "Show Achievements Table", tooltip="Toggle to show or hide the achievements table")
+enable_sound_effects = input.bool(false, "Enable Sound Effects (If Available)")
+custom_theme = input.string("Dark Fantasy", "Game Theme", options=["Dark Fantasy", "Sci-Fi", "Medieval", "Cyberpunk", "Classic"])
 
-// ===== Game State Management =====
-// Core game state variables - using individual vars instead of object literal
-// Player stats
+// Game stats
 var int total_score = 0
 var int win_streak = 0
 var int loss_streak = 0
@@ -83,84 +74,153 @@ var int total_trades = 0
 var int successful_trades = 0
 var float success_rate = 0.0
 var int experience_points = 0
-var int skill_level = 1
 var string player_rank = "Novice"
+var int skill_level = 1
 
-// Trade tracking
-var int bars_in_current_trade = 0
-var bool in_active_trade = false
-var bool trade_completed = false
-var string current_trade_status = "No Active Trade"
-var float trade_entry_price = na
-var int current_trade_score = 0
-var bool need_stats_update = false
-
-// Trade conditions
-var string last_signal = na
-var bool sl_hit = false
-var bool tp_hit = false
-
-// ===== Achievement System =====
-// Using arrays for achievements with simplified initialization
+// Achievement system - moved here to fix undeclared identifier issues
 var array<string> achievements = array.new_string()
 var array<bool> achievement_unlocked = array.new_bool()
 
-// Initialize achievements only once
+// Initialize achievements if not already done
 if barstate.isfirst
-    // Initialize achievements directly
     achievements.push("First Trade")
-    achievements.push("3-Win Streak") 
-    achievements.push("5-Win Streak")
-    achievements.push("10 Total Trades")
-    achievements.push("70% Win Rate")
-    achievements.push("1000+ Score")
-    achievements.push("Level 5 Reached")
-    achievements.push("Master Trader Rank")
+    achievement_unlocked.push(false)
     
-    // Initialize corresponding unlock status
+    achievements.push("3-Win Streak")
     achievement_unlocked.push(false)
+    
+    achievements.push("5-Win Streak")
     achievement_unlocked.push(false)
+    
+    achievements.push("10 Total Trades")
     achievement_unlocked.push(false)
+    
+    achievements.push("70% Win Rate")
     achievement_unlocked.push(false)
+    
+    achievements.push("1000+ Score")
     achievement_unlocked.push(false)
+    
+    achievements.push("Level 5 Reached")
     achievement_unlocked.push(false)
-    achievement_unlocked.push(false)
+    
+    achievements.push("Master Trader Rank")
     achievement_unlocked.push(false)
 
-// ===== Technical Parameters =====
-// Dynamic adjustment based on timeframe and difficulty
+// ===== Input Parameters with Dynamic Scaling =====
 tf_factor = get_timeframe_factor()
 
-// Difficulty multiplier for risk/reward
+// Basic Parameters - Dynamically adjusted based on timeframe and difficulty
 difficulty_mult = switch difficulty
     "Easy" => 0.8
     "Hard" => 1.2
     "Expert" => 1.5
-    => 1.0  // Balanced
+    => 1.0
 
-// Core indicator parameters with simplified interface
-adx_length = input.int(14, "ADX Length") * tf_factor
-adx_threshold = input.int(25, "ADX Threshold")
-ema_fast = input.int(8, "Fast EMA") * tf_factor
-ema_mid = input.int(21, "Mid EMA") * tf_factor
-ema_slow = input.int(55, "Slow EMA") * tf_factor
+adx_length = input.int(14, "Base ADX Length") * tf_factor
+adx_lookback = input.int(100, "ADX Lookback Period (for Dynamic Thresholds)")
+adx_std_multiplier = input.float(1.0, "ADX Standard Deviation Multiplier", minval=0.5, maxval=3.0, step=0.1) * difficulty_mult
+adx_threshold = input.int(25, "Minimum ADX Threshold", tooltip="Dynamic thresholds will never be lower than this")
+ema_fast = input.int(8, "Base Fast EMA") * tf_factor
+ema_mid = input.int(21, "Base Mid EMA") * tf_factor
+ema_slow = input.int(55, "Base Slow EMA") * tf_factor
 show_ema = input.bool(true, "Show EMAs")
-volume_ma = input.int(20, "Volume MA") * tf_factor
-rsi_length = input.int(14, "RSI Length") * tf_factor
+volume_ma = input.int(20, "Base Volume MA Length") * tf_factor
+rsi_length = input.int(14, "Base RSI Length") * tf_factor
 
-// Signal display options
-show_persistence = input.bool(true, "Signal Persistence")
-signal_persistence = input.int(5, "Signal Duration (Bars)", minval=1, maxval=20)
+// Display Options
+show_debug = input.bool(false, "Show Debug Info")
+show_persistence = input.bool(true, "Show Signal Persistence")
+signal_persistence = input.int(5, "Signal Triangle Persistence (Bars)", minval=1, maxval=20, tooltip="Only applies if Signal Persistence is enabled")
+show_dynamic_thresholds = input.bool(true, "Show Dynamic Thresholds in Table")
 
-// Risk parameters
-atr_length = input.int(14, "ATR Length") * tf_factor
-base_sl_mult = input.float(2.0, "SL Multiplier", minval=0.5, maxval=5.0, step=0.1) * difficulty_mult
-base_tp_mult = input.float(3.0, "TP Multiplier", minval=0.5, maxval=7.0, step=0.1) * difficulty_mult
-volatility_period = input.int(20, "Volatility Period") * tf_factor
+// Dynamic ATR Parameters
+atr_length = input.int(14, "Base ATR Length") * tf_factor
+base_sl_mult = input.float(2.0, "Base SL Multiplier", minval=0.5, maxval=5.0, step=0.1) * difficulty_mult
+base_tp_mult = input.float(3.0, "Base TP Multiplier", minval=0.5, maxval=7.0, step=0.1) * difficulty_mult
+volatility_period = input.int(20, "Base Volatility Period") * tf_factor
 
-// ===== Technical Indicators =====
-// Core indicators calculation
+// ===== Dynamic ADX Threshold Calculation =====
+// Calculate ADX
 [plus_dm, minus_dm, adx] = ta.dmi(adx_length, adx_length)
+
+// Calculate dynamic ADX thresholds based on recent market behavior
+adx_mean = ta.sma(adx, adx_lookback)
+adx_std = ta.stdev(adx, adx_lookback)
+
+// Dynamic thresholds with a minimum floor
+dynamic_strong_threshold = math.max(adx_mean + (adx_std * adx_std_multiplier), adx_threshold)
+dynamic_weak_threshold = math.max(adx_mean - (adx_std * adx_std_multiplier), adx_threshold * 0.7)
+
+// ===== Market Regime Detection =====
+calc_volatility(src, length) =>
+    std = ta.stdev(src, length)
+    typical_range = math.abs(ta.highest(high, length) - ta.lowest(low, length)) / length
+    (std + typical_range) / 2
+
+detect_market_regime(src, vol, rsi, adx, di_plus, di_minus) =>
+    // Volatility regime
+    vol_sma = ta.sma(vol, 20)
+    vol_ratio = vol / vol_sma
+    high_vol = vol_ratio > 1.5
+    low_vol = vol_ratio < 0.7
+    
+    // Trend regime - using dynamic thresholds
+    strong_trend = adx > dynamic_strong_threshold
+    weak_trend = adx < dynamic_weak_threshold
+    trend_direction = di_plus > di_minus ? 1 : -1
+    
+    // Momentum regime
+    high_momentum = rsi > 70 or rsi < 30
+    neutral_momentum = rsi >= 45 and rsi <= 55
+    
+    // Price action
+    price_sma = ta.sma(src, 20)
+    price_above_sma = src > price_sma
+    
+    // Combine regime factors
+    string vol_regime = high_vol ? "HIGH_VOL" : low_vol ? "LOW_VOL" : "NORMAL_VOL"
+    string trend_regime = strong_trend ? (trend_direction > 0 ? "STRONG_UPTREND" : "STRONG_DOWNTREND") :
+                         weak_trend ? "CHOPPY" : "MODERATE_TREND"
+    string momentum_regime = high_momentum ? "EXTREME" : neutral_momentum ? "NEUTRAL" : "MODERATE"
+    
+    [vol_regime, trend_regime, momentum_regime]
+
+get_regime_multiplier(vol_regime, trend_regime, momentum_regime, vol_confirmed) =>
+    float regime_mult = 1.0
+    
+    // Volatility-based adjustments
+    regime_mult := regime_mult * (vol_regime == "HIGH_VOL" ? 1.3 : vol_regime == "LOW_VOL" ? 0.8 : 1.0)
+    
+    // Trend-based adjustments
+    regime_mult := regime_mult * (trend_regime == "STRONG_UPTREND" or trend_regime == "STRONG_DOWNTREND" ? 0.9 : trend_regime == "CHOPPY" ? 1.4 : 1.1)
+    
+    // Momentum-based adjustments
+    regime_mult := regime_mult * (momentum_regime == "EXTREME" ? 1.2 : momentum_regime == "NEUTRAL" ? 0.9 : 1.0)
+    
+    // Volume confirmation
+    regime_mult := regime_mult * (vol_confirmed ? 1.0 : 1.1)
+    
+    regime_mult
+
+get_dynamic_multipliers(base_sl, base_tp, volatility, adx, rsi, vol_confirmed) =>
+    // Get the market regime information
+    [vol_regime, trend_regime, momentum_regime] = detect_market_regime(close, volume, rsi, adx, plus_dm, minus_dm)
+    
+    // Get the regime multiplier with the correct parameters
+    regime_mult = get_regime_multiplier(vol_regime, trend_regime, momentum_regime, vol_confirmed)
+    
+    // Calculate volatility factor
+    vol_factor = volatility > 2.0 ? 1.3 : volatility > 1.5 ? 1.1 : 0.9
+    
+    // Calculate final multipliers
+    sl_mult = base_sl * regime_mult * vol_factor
+    tp_mult = base_tp * regime_mult * (2 - vol_factor)
+    
+    [sl_mult, tp_mult]
+
+// ===== Data Calculations =====
+// Direct calculations on current timeframe
 rsi = ta.rsi(close, rsi_length)
 ema_f = ta.ema(close, ema_fast)
 ema_m = ta.ema(close, ema_mid)
@@ -170,230 +230,49 @@ volatility = calc_volatility(close, volatility_period)
 vol_ma_current = ta.sma(volume, volume_ma)
 vol_trend = volume > vol_ma_current
 
-// Dynamic ADX thresholds
-adx_lookback = 100
-adx_mean = ta.sma(adx, adx_lookback)
-adx_std = ta.stdev(adx, adx_lookback)
-dynamic_strong_threshold = math.max(adx_mean + (adx_std * difficulty_mult), adx_threshold)
-dynamic_weak_threshold = math.max(adx_mean - (adx_std * difficulty_mult), adx_threshold * 0.7)
+// ===== Market Regime and Trend Analysis =====
+[vol_regime, trend_regime, momentum_regime] = detect_market_regime(close, volume, rsi, adx, plus_dm, minus_dm)
 
-// ===== Market Regime Detection =====
-// Condensed market regime function
-detect_market_regime() =>
-    // Volatility check
-    vol_ratio = volatility / ta.sma(volatility, 20)
-    vol_regime = vol_ratio > 1.5 ? "HIGH_VOL" : vol_ratio < 0.7 ? "LOW_VOL" : "NORMAL_VOL"
-    
-    // Trend detection
-    strong_trend = adx > dynamic_strong_threshold
-    weak_trend = adx < dynamic_weak_threshold
-    trend_direction = plus_dm > minus_dm ? 1 : -1
-    
-    trend_regime = strong_trend ? (trend_direction > 0 ? "STRONG_UPTREND" : "STRONG_DOWNTREND") :
-                   weak_trend ? "CHOPPY" : "MODERATE_TREND"
-    
-    // Momentum check
-    momentum_regime = rsi > 70 or rsi < 30 ? "EXTREME" : 
-                      rsi >= 45 and rsi <= 55 ? "NEUTRAL" : "MODERATE"
-    
-    [vol_regime, trend_regime, momentum_regime]
+// Traditional trend analysis
+ema_aligned_bull = ema_f > ema_m and ema_m > ema_s
+ema_aligned_bear = ema_f < ema_m and ema_m < ema_s
+vol_confirm = vol_trend
+di_bull = plus_dm > minus_dm
 
-// Get multipliers based on market conditions
-get_risk_reward_multipliers() =>
-    [vol_regime, trend_regime, momentum_regime] = detect_market_regime()
-    
-    // Calculate base regime multiplier
-    regime_mult = 1.0
-    
-    // Adjustments based on detected regimes
-    regime_mult := regime_mult * (vol_regime == "HIGH_VOL" ? 1.3 : vol_regime == "LOW_VOL" ? 0.8 : 1.0)
-    regime_mult := regime_mult * (trend_regime == "STRONG_UPTREND" or trend_regime == "STRONG_DOWNTREND" ? 0.9 : 
-                                  trend_regime == "CHOPPY" ? 1.4 : 1.1)
-    regime_mult := regime_mult * (momentum_regime == "EXTREME" ? 1.2 : momentum_regime == "NEUTRAL" ? 0.9 : 1.0)
-    
-    // Volume confirmation adjustment
-    regime_mult := regime_mult * (vol_trend ? 1.0 : 1.1)
-    
-    // Volatility factor
-    vol_factor = volatility > 2.0 ? 1.3 : volatility > 1.5 ? 1.1 : 0.9
-    
-    // Calculate final multipliers
-    sl_mult = base_sl_mult * regime_mult * vol_factor
-    tp_mult = base_tp_mult * regime_mult * (2 - vol_factor)
-    
-    [sl_mult, tp_mult, vol_regime, trend_regime, momentum_regime]
+// Combine regime information with trend analysis
+strong_trend = trend_regime == "STRONG_UPTREND" or trend_regime == "STRONG_DOWNTREND"
+is_strong_bull = trend_regime == "STRONG_UPTREND" and ema_aligned_bull and vol_confirm
+is_strong_bear = trend_regime == "STRONG_DOWNTREND" and ema_aligned_bear and vol_confirm
+is_weak_bull = ema_aligned_bull and di_bull and trend_regime == "MODERATE_TREND"
+is_weak_bear = ema_aligned_bear and not di_bull and trend_regime == "MODERATE_TREND"
 
-// ===== Trend Analysis =====
-analyze_trend() =>
-    [vol_regime, trend_regime, momentum_regime] = detect_market_regime()
-    
-    // Traditional trend checks
-    ema_aligned_bull = ema_f > ema_m and ema_m > ema_s
-    ema_aligned_bear = ema_f < ema_m and ema_m < ema_s
-    di_bull = plus_dm > minus_dm
-    
-    // Define trend states
-    is_strong_bull = trend_regime == "STRONG_UPTREND" and ema_aligned_bull and vol_trend
-    is_strong_bear = trend_regime == "STRONG_DOWNTREND" and ema_aligned_bear and vol_trend
-    is_weak_bull = ema_aligned_bull and di_bull and trend_regime == "MODERATE_TREND"
-    is_weak_bear = ema_aligned_bear and not di_bull and trend_regime == "MODERATE_TREND"
-    
-    // Technical trend state
-    trend_state = is_strong_bull ? "STRONG BULL" : 
-                 is_strong_bear ? "STRONG BEAR" : 
-                 is_weak_bull ? "WEAK BULL" : 
-                 is_weak_bear ? "WEAK BEAR" : 
-                 trend_regime == "CHOPPY" ? "CHOPPY" : "NEUTRAL"
-    
-    // Game-themed trend name
-    trend_state_game = is_strong_bull ? "LEGENDARY BULL" : 
-                      is_strong_bear ? "DRAGON BEAR" : 
-                      is_weak_bull ? "RISING KNIGHT" : 
-                      is_weak_bear ? "FALLING SHADOW" : 
-                      trend_regime == "CHOPPY" ? "CHAOTIC BATTLEFIELD" : "NEUTRAL REALM"
-    
-    [trend_state, trend_state_game, is_strong_bull, is_strong_bear, is_weak_bull, is_weak_bear]
+// Game-themed trend state names
+trend_state_game = is_strong_bull ? "LEGENDARY BULL" : 
+             is_strong_bear ? "DRAGON BEAR" : 
+             is_weak_bull ? "RISING KNIGHT" : 
+             is_weak_bear ? "FALLING SHADOW" : 
+             trend_regime == "CHOPPY" ? "CHAOTIC BATTLEFIELD" : "NEUTRAL REALM"
 
-// ===== Game Scoring System =====
-// Calculate score based on trade performance
-calculate_score(is_win, trend_strength, risk_mult, persistence) =>
-    base_score = is_win ? 100 : -50
-    
-    // Trend bonus/penalty
-    trend_bonus = trend_strength == "STRONG" ? 50 : trend_strength == "WEAK" ? 20 : 0
-    trend_score = is_win ? trend_bonus : -trend_bonus / 2
-    
-    // Risk and persistence adjustments
-    risk_bonus = math.round(risk_mult * 10)
-    risk_score = is_win ? risk_bonus : -math.round(risk_bonus / 2)
-    persistence_bonus = math.min(persistence, 10) * 5
-    persistence_score = is_win ? persistence_bonus : 0
-    
-    // Apply difficulty multiplier
-    diff_mult = switch difficulty
-        "Easy" => 0.8
-        "Hard" => 1.3
-        "Expert" => 1.8
-        => 1.0
-        
-    math.round((base_score + trend_score + risk_score + persistence_score) * diff_mult)
+// Original technical trend state (for calculation purposes)
+trend_state = is_strong_bull ? "STRONG BULL" : 
+             is_strong_bear ? "STRONG BEAR" : 
+             is_weak_bull ? "WEAK BULL" : 
+             is_weak_bear ? "WEAK BEAR" : 
+             trend_regime == "CHOPPY" ? "CHOPPY" : "NEUTRAL"
 
-// Update game statistics with proper variable handling
-update_game_stats(is_win, score_change) =>
-    // Calculate new values
-    new_win_streak = is_win ? win_streak + 1 : 0
-    new_loss_streak = is_win ? 0 : loss_streak + 1
-    new_successful_trades = is_win ? successful_trades + 1 : successful_trades
-    new_total_trades = total_trades + 1
-    new_success_rate = new_successful_trades / new_total_trades * 100
-    new_experience_points = is_win ? 
-                          experience_points + score_change : 
-                          experience_points + math.max(10, math.round(score_change / 5))
-    new_total_score = total_score + score_change
-    
-    // Level up system
-    new_skill_level = math.floor(math.sqrt(new_experience_points / 100)) + 1
-    
-    // Rank system
-    new_player_rank = switch true
-        new_experience_points >= 10000 => "Legendary Trader"
-        new_experience_points >= 5000 => "Master Trader"
-        new_experience_points >= 2500 => "Elite Trader"
-        new_experience_points >= 1000 => "Advanced Trader"
-        new_experience_points >= 500 => "Skilled Trader"
-        new_experience_points >= 250 => "Proficient Trader"
-        new_experience_points >= 100 => "Competent Trader"
-        => "Novice Trader"
-    
-    // Return all the new values 
-    [new_win_streak, new_loss_streak, new_successful_trades, new_total_trades, 
-     new_success_rate, new_experience_points, new_total_score, new_skill_level, new_player_rank]
-
-// ===== Achievement System =====
-check_achievements() =>
-    new_achievement = false
-    achievement_index = -1
-    xp_bonus = 0
-    
-    // First Trade achievement
-    if total_trades == 1 and not achievement_unlocked.get(0)
-        achievement_unlocked.set(0, true)
-        new_achievement := true
-        achievement_index := 0
-        xp_bonus := 100
-    
-    // 3-Win Streak
-    if win_streak >= 3 and not achievement_unlocked.get(1)
-        achievement_unlocked.set(1, true)
-        new_achievement := true
-        achievement_index := 1
-        xp_bonus := 100
-    
-    // 5-Win Streak
-    if win_streak >= 5 and not achievement_unlocked.get(2)
-        achievement_unlocked.set(2, true)
-        new_achievement := true
-        achievement_index := 2
-        xp_bonus := 100
-    
-    // 10 Total Trades
-    if total_trades >= 10 and not achievement_unlocked.get(3)
-        achievement_unlocked.set(3, true)
-        new_achievement := true
-        achievement_index := 3
-        xp_bonus := 100
-    
-    // 70% Win Rate with min 5 trades
-    if success_rate >= 70 and total_trades >= 5 and not achievement_unlocked.get(4)
-        achievement_unlocked.set(4, true)
-        new_achievement := true
-        achievement_index := 4
-        xp_bonus := 100
-    
-    // 1000+ Score
-    if total_score >= 1000 and not achievement_unlocked.get(5)
-        achievement_unlocked.set(5, true)
-        new_achievement := true
-        achievement_index := 5
-        xp_bonus := 100
-    
-    // Level 5 Reached
-    if skill_level >= 5 and not achievement_unlocked.get(6)
-        achievement_unlocked.set(6, true)
-        new_achievement := true
-        achievement_index := 6
-        xp_bonus := 100
-    
-    // Master Trader Rank
-    if player_rank == "Master Trader" and not achievement_unlocked.get(7)
-        achievement_unlocked.set(7, true)
-        new_achievement := true
-        achievement_index := 7
-        xp_bonus := 100
-    
-    [new_achievement, achievement_index, xp_bonus]
-
-// ===== Entry/Exit Logic =====
-// Get risk-reward multipliers
-[sl_multiplier, tp_multiplier, vol_regime, trend_regime, momentum_regime] = get_risk_reward_multipliers()
-
-// Determine trend state
-[trend_state, trend_state_game, is_strong_bull, is_strong_bear, is_weak_bull, is_weak_bear] = analyze_trend()
-
-// Store previous trend state for comparison
+// Store previous trend_state for comparison
 var prev_trend_state = trend_state
 trend_change = trend_state != prev_trend_state
 prev_trend_state := trend_state
 
-// Entry Conditions
+// Entry Conditions with explicit storage of component values for debugging
 is_bull_state = trend_state == "STRONG BULL" or trend_state == "WEAK BULL"
 is_bear_state = trend_state == "STRONG BEAR" or trend_state == "WEAK BEAR"
 
-// Signal generation
 longCondition = trend_change and is_bull_state
 shortCondition = trend_change and is_bear_state
 
-// Signal tracking
+// Track signal history
 var int bars_since_long = 999
 var int bars_since_short = 999
 
@@ -411,14 +290,78 @@ else
 show_long_signal = show_persistence ? bars_since_long < signal_persistence : bars_since_long == 0
 show_short_signal = show_persistence ? bars_since_short < signal_persistence : bars_since_short == 0
 
-// ===== Trade Management =====
-// SL/TP levels
+// ===== Dynamic Stop Loss and Take Profit Levels =====
 var float long_sl = na
 var float long_tp = na
 var float short_sl = na
 var float short_tp = na
+var bool sl_hit = false
+var string last_signal = na
+var bool tp_hit = false
+var float trade_entry_price = na
+var int current_trade_score = 0
+
+[sl_multiplier, tp_multiplier] = get_dynamic_multipliers(base_sl_mult, base_tp_mult, volatility, adx, rsi, vol_confirm)
+
+// Function to calculate score based on trade outcome, market condition, and risk taken
+calculate_score(is_win, trend_strength, risk_mult, persistence) =>
+    base_score = is_win ? 100 : -50
+    
+    // Bonus for strong trends if won, penalty if lost
+    trend_bonus = trend_strength == "STRONG" ? 50 : trend_strength == "WEAK" ? 20 : 0
+    trend_score = is_win ? trend_bonus : -trend_bonus / 2
+    
+    // Risk bonus (higher risk = higher reward)
+    risk_bonus = math.round(risk_mult * 10)
+    risk_score = is_win ? risk_bonus : -math.round(risk_bonus / 2)
+    
+    // Persistence bonus - rewarding staying in trades
+    persistence_bonus = math.min(persistence, 10) * 5
+    persistence_score = is_win ? persistence_bonus : 0
+    
+    // Difficulty multiplier
+    diff_mult = switch difficulty
+        "Easy" => 0.8
+        "Hard" => 1.3
+        "Expert" => 1.8
+        => 1.0
+        
+    total = math.round((base_score + trend_score + risk_score + persistence_score) * diff_mult)
+    total
+
+// Update game statistics based on trade results
+update_game_stats(bool is_win, int score_change) =>
+    int new_win_streak = is_win ? win_streak + 1 : 0
+    int new_loss_streak = is_win ? 0 : loss_streak + 1
+    int new_successful_trades = is_win ? successful_trades + 1 : successful_trades
+    int new_total_trades = total_trades + 1
+    float new_success_rate = new_successful_trades / new_total_trades * 100
+    int new_experience_points = is_win ? 
+                              experience_points + score_change : 
+                              experience_points + math.max(10, math.round(score_change / 5))
+    int new_total_score = total_score + score_change
+    
+    // Level up system
+    int new_skill_level = math.floor(math.sqrt(new_experience_points / 100)) + 1
+    
+    // Rank system
+    string new_player_rank = switch true
+        new_experience_points >= 10000 => "Legendary Trader"
+        new_experience_points >= 5000 => "Master Trader"
+        new_experience_points >= 2500 => "Elite Trader"
+        new_experience_points >= 1000 => "Advanced Trader"
+        new_experience_points >= 500 => "Skilled Trader"
+        new_experience_points >= 250 => "Proficient Trader"
+        new_experience_points >= 100 => "Competent Trader"
+        => "Novice Trader"
+        
+    [new_win_streak, new_loss_streak, new_successful_trades, new_total_trades, 
+     new_success_rate, new_experience_points, new_total_score, new_skill_level, new_player_rank]
 
 // Handle new trade signals
+var int bars_in_current_trade = 0
+var bool in_active_trade = false
+
 if longCondition
     trade_entry_price := close
     long_sl := close - (current_atr * sl_multiplier)
@@ -430,9 +373,6 @@ if longCondition
     last_signal := "LONG"
     bars_in_current_trade := 0
     in_active_trade := true
-    trade_completed := false
-    current_trade_status := "Active Long"
-    need_stats_update := false
     
     // Award points for taking a new signal
     current_trade_score := 10
@@ -450,16 +390,13 @@ if shortCondition
     last_signal := "SHORT"
     bars_in_current_trade := 0
     in_active_trade := true
-    trade_completed := false
-    current_trade_status := "Active Short"
-    need_stats_update := false
     
     // Award points for taking a new signal
     current_trade_score := 10
     if trend_state == "STRONG BEAR"
         current_trade_score := 20
 
-// Check SL/TP hits
+// Check SL/TP hits and update scores
 if in_active_trade
     bars_in_current_trade := bars_in_current_trade + 1
     
@@ -468,191 +405,50 @@ if in_active_trade
         if low <= long_sl
             sl_hit := true
             in_active_trade := false
-            trade_completed := true
-            current_trade_status := "Long SL Hit"
-            need_stats_update := true
             
             // Calculate score for losing trade
             trend_strength = trend_state == "STRONG BULL" ? "STRONG" : trend_state == "WEAK BULL" ? "WEAK" : "NEUTRAL"
             score_change = calculate_score(false, trend_strength, sl_multiplier, bars_in_current_trade)
             current_trade_score := score_change
             
+            [win_streak, loss_streak, successful_trades, total_trades, success_rate, experience_points, total_score, skill_level, player_rank] = update_game_stats(false, score_change)
+            
         if high >= long_tp
             tp_hit := true
             in_active_trade := false
-            trade_completed := true
-            current_trade_status := "Long TP Hit"
-            need_stats_update := true
             
             // Calculate score for winning trade
             trend_strength = trend_state == "STRONG BULL" ? "STRONG" : trend_state == "WEAK BULL" ? "WEAK" : "NEUTRAL"
             score_change = calculate_score(true, trend_strength, sl_multiplier, bars_in_current_trade)
             current_trade_score := score_change
+            
+            [win_streak, loss_streak, successful_trades, total_trades, success_rate, experience_points, total_score, skill_level, player_rank] = update_game_stats(true, score_change)
     
     // For SHORT trades
     if not na(short_sl) and not sl_hit and not tp_hit
         if high >= short_sl
             sl_hit := true
             in_active_trade := false
-            trade_completed := true
-            current_trade_status := "Short SL Hit"
-            need_stats_update := true
             
             // Calculate score for losing trade
             trend_strength = trend_state == "STRONG BEAR" ? "STRONG" : trend_state == "WEAK BEAR" ? "WEAK" : "NEUTRAL"
             score_change = calculate_score(false, trend_strength, sl_multiplier, bars_in_current_trade)
             current_trade_score := score_change
             
+            [win_streak, loss_streak, successful_trades, total_trades, success_rate, experience_points, total_score, skill_level, player_rank] = update_game_stats(false, score_change)
+            
         if low <= short_tp
             tp_hit := true
             in_active_trade := false
-            trade_completed := true
-            current_trade_status := "Short TP Hit"
-            need_stats_update := true
             
             // Calculate score for winning trade
             trend_strength = trend_state == "STRONG BEAR" ? "STRONG" : trend_state == "WEAK BEAR" ? "WEAK" : "NEUTRAL"
             score_change = calculate_score(true, trend_strength, sl_multiplier, bars_in_current_trade)
             current_trade_score := score_change
+            
+            [win_streak, loss_streak, successful_trades, total_trades, success_rate, experience_points, total_score, skill_level, player_rank] = update_game_stats(true, score_change)
 
-// Update stats when trade completes
-if need_stats_update
-    [new_win_streak, new_loss_streak, new_successful_trades, new_total_trades, new_success_rate, new_experience_points, new_total_score, new_skill_level, new_player_rank] = update_game_stats(tp_hit, current_trade_score)
-        
-    // Update the global variables manually
-    win_streak := new_win_streak
-    loss_streak := new_loss_streak
-    successful_trades := new_successful_trades
-    total_trades := new_total_trades
-    success_rate := new_success_rate
-    experience_points := new_experience_points
-    total_score := new_total_score
-    skill_level := new_skill_level
-    player_rank := new_player_rank
-    
-    need_stats_update := false
-    
-    // Check for achievements after updating stats
-    [new_achievement, achievement_index, xp_bonus] = check_achievements()
-    
-    // Handle achievement unlocks
-    if new_achievement and show_animations
-        achievement_text = "🏆 ACHIEVEMENT UNLOCKED! 🏆\n" + achievements.get(achievement_index) + "\n+100 XP"
-        label.new(bar_index, high + (current_atr * 3), 
-                 text=achievement_text, 
-                 color=color.new(#FFD700, 15), 
-                 textcolor=color.white, 
-                 style=label.style_label_center,
-                 size=size.large)
-        
-        // Award XP for achievement
-        experience_points := experience_points + xp_bonus
-        
-        // Update level and rank based on new XP
-        skill_level := math.floor(math.sqrt(experience_points / 100)) + 1
-        
-        player_rank := switch true
-            experience_points >= 10000 => "Legendary Trader"
-            experience_points >= 5000 => "Master Trader"
-            experience_points >= 2500 => "Elite Trader"
-            experience_points >= 1000 => "Advanced Trader"
-            experience_points >= 500 => "Skilled Trader"
-            experience_points >= 250 => "Proficient Trader"
-            experience_points >= 100 => "Competent Trader"
-            => "Novice Trader"
-
-// ===== Visualization =====
-// Get theme colors
-get_theme_colors() =>
-    if custom_theme == "Dark Fantasy"
-        [#4CAF50, #F44336, #9E9E9E]  // bull, bear, neutral
-    else if custom_theme == "Sci-Fi"
-        [#00BCD4, #FF9800, #3F51B5]
-    else if custom_theme == "Medieval"
-        [#8D6E63, #5D4037, #795548]
-    else if custom_theme == "Cyberpunk"
-        [#E91E63, #673AB7, #9C27B0]
-    else  // Classic
-        [#4CAF50, #F44336, #9E9E9E]
-
-[bull_color, bear_color, neutral_color] = get_theme_colors()
-
-// Background colors with transparency
-background_strong_bull = color.new(bull_color, 90)
-background_strong_bear = color.new(bear_color, 90)
-background_weak_bull = color.new(bull_color, 95)
-background_weak_bear = color.new(bear_color, 95)
-background_neutral = color.new(neutral_color, 95)
-
-// Plot EMAs
-plot(ema_f, "Fast EMA", color=color.new(bull_color, 0), linewidth=2, display=show_ema ? display.all : display.none)
-plot(ema_m, "Mid EMA", color=color.new(neutral_color, 0), linewidth=2, display=show_ema ? display.all : display.none)
-plot(ema_s, "Slow EMA", color=color.new(bear_color, 0), linewidth=2, display=show_ema ? display.all : display.none)
-
-// Background color based on trend state
-bg_color = switch trend_state
-    "STRONG BULL" => background_strong_bull
-    "STRONG BEAR" => background_strong_bear
-    "WEAK BULL" => background_weak_bull
-    "WEAK BEAR" => background_weak_bear
-    => background_neutral
-bgcolor(bg_color)
-
-// Label color based on trend
-label_color = switch trend_state
-    "STRONG BULL" => bull_color
-    "WEAK BULL" => bull_color
-    "STRONG BEAR" => bear_color
-    "WEAK BEAR" => bear_color
-    => neutral_color
-
-// Display themed trend state labels
-var string prev_trend = na
-if trend_state != prev_trend
-    label_y = trend_state == "STRONG BULL" or trend_state == "WEAK BULL" ? high : low
-    
-    // Game-themed label with appropriate icon
-    battle_icon = switch trend_state
-        "STRONG BULL" => "🐂"
-        "WEAK BULL" => "🔼"
-        "STRONG BEAR" => "🐻"
-        "WEAK BEAR" => "🔽"
-        "CHOPPY" => "⚔️"
-        => "⚖️"
-    
-    label.new(bar_index, label_y, text=battle_icon + " " + trend_state_game + "\n" + timeframe.period, 
-             color=label_color, 
-             textcolor=color.white, 
-             style=label.style_label_down, 
-             size=size.small)
-    prev_trend := trend_state
-
-// Plot trade levels
-plot(long_sl, "Long SL", color=color.new(bear_color, 0), style=plot.style_linebr, linewidth=2)
-plot(long_tp, "Long TP", color=color.new(bull_color, 0), style=plot.style_linebr, linewidth=2)
-plot(short_sl, "Short SL", color=color.new(bull_color, 0), style=plot.style_linebr, linewidth=2)
-plot(short_tp, "Short TP", color=color.new(bear_color, 0), style=plot.style_linebr, linewidth=2)
-
-// Character-specific signal shapes
-longSignalShape = character_type == "Hunter" ? shape.arrowup : 
-                  character_type == "Knight" ? shape.diamond : 
-                  character_type == "Ninja" ? shape.triangleup : 
-                  character_type == "Wizard" ? shape.circle : 
-                  shape.triangleup
-
-shortSignalShape = character_type == "Hunter" ? shape.arrowdown : 
-                   character_type == "Knight" ? shape.diamond : 
-                   character_type == "Ninja" ? shape.triangledown : 
-                   character_type == "Wizard" ? shape.circle : 
-                   shape.triangledown
-
-// Plot signal shapes
-plotshape(show_long_signal, "Buy Signal", location=location.belowbar, 
-         color=color.new(bull_color, 0), style=longSignalShape, size=size.small)
-plotshape(show_short_signal, "Sell Signal", location=location.abovebar, 
-         color=color.new(bear_color, 0), style=shortSignalShape, size=size.small)
-
-// Signal animations and feedback
+// Signal Debug - Generate labels when signals occur
 if longCondition and show_animations
     character_icon = switch character_type
         "Hunter" => "🏹"
@@ -687,14 +483,137 @@ if tp_hit and not tp_hit[1] and show_animations
              color=color.green, textcolor=color.white, 
              style=label.style_label_center, size=size.normal)
 
-// ===== Game Tables =====
-// Game Status Table
+// ===== Game Theme Visual Elements =====
+// Set colors based on selected theme
+var color bull_color = na
+var color bear_color = na
+var color neutral_color = na
+var color background_strong_bull = na
+var color background_strong_bear = na
+var color background_weak_bull = na
+var color background_weak_bear = na
+var color background_neutral = na
+
+if custom_theme == "Dark Fantasy"
+    bull_color := #4CAF50  // Green
+    bear_color := #F44336  // Red
+    neutral_color := #9E9E9E  // Gray
+    background_strong_bull := color.new(#4CAF50, 90)  // Green
+    background_strong_bear := color.new(#F44336, 90)  // Red
+    background_weak_bull := color.new(#4CAF50, 95)  // Light Green
+    background_weak_bear := color.new(#F44336, 95)  // Light Red
+    background_neutral := color.new(#9E9E9E, 95)  // Light Gray
+else if custom_theme == "Sci-Fi"
+    bull_color := #00BCD4  // Cyan
+    bear_color := #FF9800  // Orange
+    neutral_color := #3F51B5  // Indigo
+    background_strong_bull := color.new(#00BCD4, 90)  // Cyan
+    background_strong_bear := color.new(#FF9800, 90)  // Orange
+    background_weak_bull := color.new(#00BCD4, 95)  // Light Cyan
+    background_weak_bear := color.new(#FF9800, 95)  // Light Orange
+    background_neutral := color.new(#3F51B5, 95)  // Light Indigo
+else if custom_theme == "Medieval"
+    bull_color := #8D6E63  // Brown
+    bear_color := #5D4037  // Dark Brown
+    neutral_color := #795548  // Medium Brown
+    background_strong_bull := color.new(#8D6E63, 90)  // Brown
+    background_strong_bear := color.new(#5D4037, 90)  // Dark Brown
+    background_weak_bull := color.new(#8D6E63, 95)  // Light Brown
+    background_weak_bear := color.new(#5D4037, 95)  // Light Dark Brown
+    background_neutral := color.new(#795548, 95)  // Light Medium Brown
+else if custom_theme == "Cyberpunk"
+    bull_color := #E91E63  // Pink
+    bear_color := #673AB7  // Deep Purple
+    neutral_color := #9C27B0  // Purple
+    background_strong_bull := color.new(#E91E63, 90)  // Pink
+    background_strong_bear := color.new(#673AB7, 90)  // Deep Purple
+    background_weak_bull := color.new(#E91E63, 95)  // Light Pink
+    background_weak_bear := color.new(#673AB7, 95)  // Light Deep Purple
+    background_neutral := color.new(#9C27B0, 95)  // Light Purple
+else  // Classic
+    bull_color := #4CAF50  // Green
+    bear_color := #F44336  // Red
+    neutral_color := #9E9E9E  // Gray
+    background_strong_bull := color.new(#4CAF50, 90)  // Green
+    background_strong_bear := color.new(#F44336, 90)  // Red
+    background_weak_bull := color.new(#4CAF50, 95)  // Light Green
+    background_weak_bear := color.new(#F44336, 95)  // Light Red
+    background_neutral := color.new(#9E9E9E, 95)  // Light Gray
+
+// Plot EMAs with theme colors
+plot(ema_f, "Fast EMA", color=color.new(bull_color, 0), linewidth=2, display=show_ema ? display.all : display.none)
+plot(ema_m, "Mid EMA", color=color.new(neutral_color, 0), linewidth=2, display=show_ema ? display.all : display.none)
+plot(ema_s, "Slow EMA", color=color.new(bear_color, 0), linewidth=2, display=show_ema ? display.all : display.none)
+
+// Background color based on trend state
+bg_color = switch trend_state
+    "STRONG BULL" => background_strong_bull
+    "STRONG BEAR" => background_strong_bear
+    "WEAK BULL" => background_weak_bull
+    "WEAK BEAR" => background_weak_bear
+    => background_neutral
+bgcolor(bg_color)
+
+// Label colors for trend changes
+label_color = switch trend_state
+    "STRONG BULL" => bull_color
+    "WEAK BULL" => bull_color
+    "STRONG BEAR" => bear_color
+    "WEAK BEAR" => bear_color
+    => neutral_color
+
+// Display themed trend state labels
+var string prev_trend = na
+if trend_state != prev_trend
+    label_y = trend_state == "STRONG BULL" or trend_state == "WEAK BULL" ? high : low
+    
+    // Game-themed label
+    battle_icon = switch trend_state
+        "STRONG BULL" => "🐂"
+        "WEAK BULL" => "🔼"
+        "STRONG BEAR" => "🐻"
+        "WEAK BEAR" => "🔽"
+        "CHOPPY" => "⚔️"
+        => "⚖️"
+    
+    label.new(bar_index, label_y, text=battle_icon + " " + trend_state_game + "\n" + timeframe.period, 
+             color=label_color, 
+             textcolor=color.white, 
+             style=label.style_label_down, 
+             size=size.small)
+    prev_trend := trend_state
+
+// Plot trade levels with themed colors
+plot(long_sl, "Long SL", color=color.new(bear_color, 0), style=plot.style_linebr, linewidth=2)
+plot(long_tp, "Long TP", color=color.new(bull_color, 0), style=plot.style_linebr, linewidth=2)
+plot(short_sl, "Short SL", color=color.new(bull_color, 0), style=plot.style_linebr, linewidth=2)
+plot(short_tp, "Short TP", color=color.new(bear_color, 0), style=plot.style_linebr, linewidth=2)
+
+// Plot signal marks with themed icons based on character type
+longSignalShape = character_type == "Hunter" ? shape.arrowup : 
+                  character_type == "Knight" ? shape.diamond : 
+                  character_type == "Ninja" ? shape.triangleup : 
+                  character_type == "Wizard" ? shape.circle : 
+                  shape.triangleup
+
+shortSignalShape = character_type == "Hunter" ? shape.arrowdown : 
+                   character_type == "Knight" ? shape.diamond : 
+                   character_type == "Ninja" ? shape.triangledown : 
+                   character_type == "Wizard" ? shape.circle : 
+                   shape.triangledown
+
+plotshape(show_long_signal, "Buy Signal", location=location.belowbar, 
+         color=color.new(bull_color, 0), style=longSignalShape, size=size.small)
+plotshape(show_short_signal, "Sell Signal", location=location.abovebar, 
+         color=color.new(bear_color, 0), style=shortSignalShape, size=size.small)
+
+// ===== Game Status Table =====
 var table gameTable = table.new(position.top_right, 10, 14, border_width=1)
 if barstate.islast and show_game_points
     // Clear the table first
     table.clear(gameTable, 0, 0, 9, 13)
     
-    // Theme header background
+    // Set table header based on theme
     theme_header_bg = switch custom_theme
         "Dark Fantasy" => color.new(#424242, 0)
         "Sci-Fi" => color.new(#01579B, 0)
@@ -738,8 +657,7 @@ if barstate.islast and show_game_points
     
     // Row 6: Success rate
     table.cell(gameTable, 0, 6, "Success Rate", bgcolor=theme_header_bg, text_color=color.white)
-    rate_text = str.tostring(math.round(success_rate)) + "% (" + 
-               str.tostring(successful_trades) + "/" + str.tostring(total_trades) + ")"
+    rate_text = str.tostring(math.round(success_rate)) + "% (" + str.tostring(successful_trades) + "/" + str.tostring(total_trades) + ")"
     success_color = success_rate >= 70 ? color.new(#4CAF50, 50) : 
                    success_rate >= 50 ? color.new(#FFC107, 50) : 
                    color.new(#F44336, 50)
@@ -789,8 +707,17 @@ if barstate.islast and show_game_points
     table.cell(gameTable, 0, 12, "Risk/Reward", bgcolor=theme_header_bg, text_color=color.white)
     risk_text = "SL: " + str.tostring(sl_multiplier, "#.##") + "x | TP: " + str.tostring(tp_multiplier, "#.##") + "x"
     table.cell(gameTable, 1, 12, risk_text, bgcolor=color.new(#9C27B0, 50), text_color=color.white)
+    // Add a tip row if less than 5 trades
+    if total_trades < 5
+        table.cell(gameTable, 0, 13, "🎮 Game Tip", bgcolor=theme_header_bg, text_color=color.white)
+        
+        // Define tips array outside of the if statement
+        var tips_array = array.from("Higher difficulty = more risk but higher rewards!", "Win streaks give bonus XP!", "Change character for different signal visuals!", "Different themes change the game colors!", "Expert mode is for the brave traders only!")
+        
+        tip_index = bar_index % array.size(tips_array)
+        table.cell(gameTable, 1, 13, tips_array.get(tip_index), bgcolor=color.new(#2196F3, 75), text_color=color.white)
     
-    // Add achievement count
+    // Add achievement count to the main game table
     int unlocked_count = 0
     for i = 0 to 7
         if achievement_unlocked.get(i)
@@ -800,10 +727,81 @@ if barstate.islast and show_game_points
     table.cell(gameTable, 1, 13, str.tostring(unlocked_count) + "/8" + 
               (show_achievements ? "" : " (Toggle to view)"), bgcolor=color.new(#FFD700, 75), text_color=color.white)
 
-// Achievement Table
+// Check for new achievements
+var bool new_achievement = false
+var int achievement_index = -1
+
+if total_trades == 1 and not achievement_unlocked.get(0)
+    achievement_unlocked.set(0, true)
+    new_achievement := true
+    achievement_index := 0
+    
+if win_streak >= 3 and not achievement_unlocked.get(1)
+    achievement_unlocked.set(1, true)
+    new_achievement := true
+    achievement_index := 1
+    
+if win_streak >= 5 and not achievement_unlocked.get(2)
+    achievement_unlocked.set(2, true)
+    new_achievement := true
+    achievement_index := 2
+    
+if total_trades >= 10 and not achievement_unlocked.get(3)
+    achievement_unlocked.set(3, true)
+    new_achievement := true
+    achievement_index := 3
+    
+if success_rate >= 70 and total_trades >= 5 and not achievement_unlocked.get(4)
+    achievement_unlocked.set(4, true)
+    new_achievement := true
+    achievement_index := 4
+    
+if total_score >= 1000 and not achievement_unlocked.get(5)
+    achievement_unlocked.set(5, true)
+    new_achievement := true
+    achievement_index := 5
+    
+if skill_level >= 5 and not achievement_unlocked.get(6)
+    achievement_unlocked.set(6, true)
+    new_achievement := true
+    achievement_index := 6
+    
+if player_rank == "Master Trader" and not achievement_unlocked.get(7)
+    achievement_unlocked.set(7, true)
+    new_achievement := true
+    achievement_index := 7
+
+// Display achievement notification
+if new_achievement and show_animations
+    achievement_text = "🏆 ACHIEVEMENT UNLOCKED! 🏆\n" + achievements.get(achievement_index) + "\n+100 XP"
+    label.new(bar_index, high + (current_atr * 3), 
+             text=achievement_text, 
+             color=color.new(#FFD700, 15), 
+             textcolor=color.white, 
+             style=label.style_label_center,
+             size=size.large)
+    
+    // Award XP for achievement
+    experience_points := experience_points + 100
+    
+    // Force stats update - use the manual approach since this is a special case
+    skill_level := math.floor(math.sqrt(experience_points / 100)) + 1
+    
+    player_rank := switch true
+        experience_points >= 10000 => "Legendary Trader"
+        experience_points >= 5000 => "Master Trader"
+        experience_points >= 2500 => "Elite Trader"
+        experience_points >= 1000 => "Advanced Trader"
+        experience_points >= 500 => "Skilled Trader"
+        experience_points >= 250 => "Proficient Trader"
+        experience_points >= 100 => "Competent Trader"
+        => "Novice Trader"
+        // ===== Achievement Table =====
 var table achievementTable = table.new(position.bottom_right, 2, 9, border_width=1)
+
+// Modified to include the achievement toggle
 if barstate.islast and show_game_points and show_achievements
-    // Get theme header bg
+    // Get the header background color from the theme settings
     color achievement_header_bg = switch custom_theme
         "Dark Fantasy" => color.new(#424242, 0)
         "Sci-Fi" => color.new(#01579B, 0)
@@ -823,8 +821,7 @@ if barstate.islast and show_game_points and show_achievements
         if achievement_unlocked.get(i)
             unlocked_count := unlocked_count + 1
     
-    table.cell(achievementTable, 1, 0, str.tostring(unlocked_count) + "/" + str.tostring(achievements.size()), 
-              bgcolor=achievement_header_bg, text_color=color.white)
+    table.cell(achievementTable, 1, 0, str.tostring(unlocked_count) + "/" + str.tostring(achievements.size()), bgcolor=achievement_header_bg, text_color=color.white)
     
     // List all achievements
     for i = 0 to 7
@@ -835,10 +832,10 @@ if barstate.islast and show_game_points and show_achievements
         table.cell(achievementTable, 0, i + 1, icon + achievements.get(i), bgcolor=bg_color, text_color=text_color)
         table.cell(achievementTable, 1, i + 1, "+100 XP", bgcolor=bg_color, text_color=text_color)
 
-// Technical Status Table
+// ===== Interactive Technical Status Table =====
 var table techTable = table.new(position.top_left, 10, 8, border_width=1)
 if barstate.islast
-    // Theme header bg
+    // Get the header background color from the theme settings
     color tech_header_bg = switch custom_theme
         "Dark Fantasy" => color.new(#424242, 0)
         "Sci-Fi" => color.new(#01579B, 0)
@@ -868,15 +865,16 @@ if barstate.islast
               bgcolor=color.gray, text_color=color.white)
     
     // Row 4: Dynamic ADX thresholds
-    table.cell(techTable, 0, 4, "ADX Thresholds", bgcolor=tech_header_bg, text_color=color.white)
-    threshold_text = "Strong: " + str.tostring(dynamic_strong_threshold, "#.##") + 
-                  " | Weak: " + str.tostring(dynamic_weak_threshold, "#.##") +
-                  " | Avg: " + str.tostring(adx_mean, "#.##")
-    table.cell(techTable, 1, 4, threshold_text, bgcolor=color.new(color.orange, 50), text_color=color.white)
+    if show_dynamic_thresholds
+        table.cell(techTable, 0, 4, "ADX Thresholds", bgcolor=tech_header_bg, text_color=color.white)
+        threshold_text = "Strong: " + str.tostring(dynamic_strong_threshold, "#.##") + 
+                      " | Weak: " + str.tostring(dynamic_weak_threshold, "#.##") +
+                      " | Avg: " + str.tostring(adx_mean, "#.##")
+        table.cell(techTable, 1, 4, threshold_text, bgcolor=color.new(color.orange, 50), text_color=color.white)
     
     // Row 5: Market Data
     table.cell(techTable, 0, 5, "Market Data", bgcolor=tech_header_bg, text_color=color.white)
-    table.cell(techTable, 1, 5, "Vol: " + (vol_trend ? "✓" : "✗") + " | ATR: " + str.tostring(current_atr, "#.##"),
+    table.cell(techTable, 1, 5, "Vol: " + (vol_confirm ? "✓" : "✗") + " | ATR: " + str.tostring(current_atr, "#.##"),
               bgcolor=color.gray, text_color=color.white)
     
     // Row 6: Status
@@ -892,17 +890,6 @@ if barstate.islast
                      "SL: " + str.tostring(short_sl, "#.##") + " | TP: " + str.tostring(short_tp, "#.##")
         table.cell(techTable, 0, 7, "Levels", bgcolor=tech_header_bg, text_color=color.white)
         table.cell(techTable, 1, 7, levels_text, bgcolor=color.new(color.blue, 50), text_color=color.white)
-
-// ===== Debug Block =====
-if show_debug and barstate.islast
-    label.new(bar_index[5], high + current_atr * 4,
-             text="Game Stats:\nTotal Score: " + str.tostring(total_score) + 
-                  "\nTrades: " + str.tostring(successful_trades) + "/" + str.tostring(total_trades) +
-                  "\nWin Streak: " + str.tostring(win_streak) +
-                  "\nTrade Status: " + current_trade_status,
-             color=color.new(color.blue, 80),
-             textcolor=color.white,
-             size=size.small)
 
 // ===== Alerts =====
 alertcondition(longCondition, "Long Signal", 
